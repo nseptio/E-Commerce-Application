@@ -1,18 +1,6 @@
 package com.app.services;
 
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Collectors;
-
-import org.modelmapper.ModelMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.stereotype.Service;
-
+import com.app.entites.Address;
 import com.app.entites.Cart;
 import com.app.entites.CartItem;
 import com.app.entites.Order;
@@ -21,17 +9,30 @@ import com.app.entites.Payment;
 import com.app.entites.Product;
 import com.app.exceptions.APIException;
 import com.app.exceptions.ResourceNotFoundException;
+import com.app.payloads.AddressDTO;
+import com.app.payloads.CreateAddressDTO;
 import com.app.payloads.OrderDTO;
 import com.app.payloads.OrderItemDTO;
 import com.app.payloads.OrderResponse;
+import com.app.repositories.AddressRepo;
 import com.app.repositories.CartItemRepo;
 import com.app.repositories.CartRepo;
 import com.app.repositories.OrderItemRepo;
 import com.app.repositories.OrderRepo;
 import com.app.repositories.PaymentRepo;
 import com.app.repositories.UserRepo;
-
 import jakarta.transaction.Transactional;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+import org.modelmapper.ModelMapper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
 
 @Transactional
 @Service
@@ -64,8 +65,15 @@ public class OrderServiceImpl implements OrderService {
 	@Autowired
 	public ModelMapper modelMapper;
 
+	@Autowired
+	public AddressService addressService;
+
+	@Autowired
+	public AddressRepo addressRepo;
+
 	@Override
-	public OrderDTO placeOrder(String email, Long cartId, String paymentMethod) {
+	public OrderDTO placeOrder(String email, Long cartId, String paymentMethod,
+			CreateAddressDTO createAddressDTO) {
 
 		Cart cart = cartRepo.findCartByEmailAndCartId(email, cartId);
 
@@ -73,7 +81,17 @@ public class OrderServiceImpl implements OrderService {
 			throw new ResourceNotFoundException("Cart", "cartId", cartId);
 		}
 
+		if (!paymentMethod.equalsIgnoreCase("cod")) {
+			throw new APIException("Invalid payment method");
+		}
+
 		Order order = new Order();
+		AddressDTO addressDTO = addressService.createAddress(createAddressDTO);
+		Address address = addressRepo
+				.findByCountryAndStateAndCityAndPincodeAndStreetAndBuildingName(
+						addressDTO.getCountry(), addressDTO.getState(),
+						addressDTO.getCity(), addressDTO.getPincode(),
+						addressDTO.getStreet(), addressDTO.getBuildingName());
 
 		order.setEmail(email);
 		order.setOrderDate(LocalDate.now());
@@ -83,7 +101,8 @@ public class OrderServiceImpl implements OrderService {
 
 		Payment payment = new Payment();
 		payment.setOrder(order);
-		payment.setPaymentMethod(paymentMethod);
+		payment.setPaymentMethod(paymentMethod.toUpperCase());
+		payment.setAddress(address);
 
 		payment = paymentRepo.save(payment);
 
@@ -118,15 +137,18 @@ public class OrderServiceImpl implements OrderService {
 
 			Product product = item.getProduct();
 
-			cartService.deleteProductFromCart(cartId, item.getProduct().getProductId());
+			cartService.deleteProductFromCart(cartId,
+					item.getProduct().getProductId());
 
 			product.setQuantity(product.getQuantity() - quantity);
 		});
 
 		OrderDTO orderDTO = modelMapper.map(savedOrder, OrderDTO.class);
-		
-		orderItems.forEach(item -> orderDTO.getOrderItems().add(modelMapper.map(item, OrderItemDTO.class)));
 
+		orderItems.forEach(item -> orderDTO.getOrderItems().add(
+				modelMapper.map(item, OrderItemDTO.class)));
+
+		orderDTO.setAddress(modelMapper.map(address, AddressDTO.class));
 		return orderDTO;
 	}
 
@@ -134,11 +156,13 @@ public class OrderServiceImpl implements OrderService {
 	public List<OrderDTO> getOrdersByUser(String email) {
 		List<Order> orders = orderRepo.findAllByEmail(email);
 
-		List<OrderDTO> orderDTOs = orders.stream().map(order -> modelMapper.map(order, OrderDTO.class))
+		List<OrderDTO> orderDTOs = orders.stream()
+				.map(order -> modelMapper.map(order, OrderDTO.class))
 				.collect(Collectors.toList());
 
 		if (orderDTOs.size() == 0) {
-			throw new APIException("No orders placed yet by the user with email: " + email);
+			throw new APIException("No orders placed yet by the user with email: " +
+					email);
 		}
 
 		return orderDTOs;
@@ -157,9 +181,11 @@ public class OrderServiceImpl implements OrderService {
 	}
 
 	@Override
-	public OrderResponse getAllOrders(Integer pageNumber, Integer pageSize, String sortBy, String sortOrder) {
+	public OrderResponse getAllOrders(Integer pageNumber, Integer pageSize,
+			String sortBy, String sortOrder) {
 
-		Sort sortByAndOrder = sortOrder.equalsIgnoreCase("asc") ? Sort.by(sortBy).ascending()
+		Sort sortByAndOrder = sortOrder.equalsIgnoreCase("asc")
+				? Sort.by(sortBy).ascending()
 				: Sort.by(sortBy).descending();
 
 		Pageable pageDetails = PageRequest.of(pageNumber, pageSize, sortByAndOrder);
@@ -168,22 +194,23 @@ public class OrderServiceImpl implements OrderService {
 
 		List<Order> orders = pageOrders.getContent();
 
-		List<OrderDTO> orderDTOs = orders.stream().map(order -> modelMapper.map(order, OrderDTO.class))
+		List<OrderDTO> orderDTOs = orders.stream()
+				.map(order -> modelMapper.map(order, OrderDTO.class))
 				.collect(Collectors.toList());
-		
+
 		if (orderDTOs.size() == 0) {
 			throw new APIException("No orders placed yet by the users");
 		}
 
 		OrderResponse orderResponse = new OrderResponse();
-		
+
 		orderResponse.setContent(orderDTOs);
 		orderResponse.setPageNumber(pageOrders.getNumber());
 		orderResponse.setPageSize(pageOrders.getSize());
 		orderResponse.setTotalElements(pageOrders.getTotalElements());
 		orderResponse.setTotalPages(pageOrders.getTotalPages());
 		orderResponse.setLastPage(pageOrders.isLast());
-		
+
 		return orderResponse;
 	}
 
@@ -200,5 +227,4 @@ public class OrderServiceImpl implements OrderService {
 
 		return modelMapper.map(order, OrderDTO.class);
 	}
-
 }
