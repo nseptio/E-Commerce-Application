@@ -81,75 +81,80 @@ public class OrderServiceImpl implements OrderService {
 			throw new ResourceNotFoundException("Cart", "cartId", cartId);
 		}
 
+		// TODO: Add more payment methods
 		if (!paymentMethod.equalsIgnoreCase("cod")) {
 			throw new APIException("Invalid payment method");
+
+			// !NOTE: If you have other payment method, please change this `else` block
+			// ! into an `else if` block with `paymentMethod.equalsIgnoreCase("cod")`
+			// condition
+		} else {
+			Order order = new Order();
+			AddressDTO addressDTO = addressService.createAddress(createAddressDTO);
+			Address address = addressRepo
+					.findByCountryAndStateAndCityAndPincodeAndStreetAndBuildingName(
+							addressDTO.getCountry(), addressDTO.getState(),
+							addressDTO.getCity(), addressDTO.getPincode(),
+							addressDTO.getStreet(), addressDTO.getBuildingName());
+
+			order.setEmail(email);
+			order.setOrderDate(LocalDate.now());
+
+			order.setTotalAmount(cart.getTotalPrice());
+			order.setOrderStatus("Order Accepted !");
+
+			Payment payment = new Payment();
+			payment.setOrder(order);
+			payment.setPaymentMethod(paymentMethod.toUpperCase());
+			payment.setAddress(address);
+
+			payment = paymentRepo.save(payment);
+
+			order.setPayment(payment);
+
+			Order savedOrder = orderRepo.save(order);
+
+			List<CartItem> cartItems = cart.getCartItems();
+
+			if (cartItems.size() == 0) {
+				throw new APIException("Cart is empty");
+			}
+
+			List<OrderItem> orderItems = new ArrayList<>();
+
+			for (CartItem cartItem : cartItems) {
+				OrderItem orderItem = new OrderItem();
+
+				orderItem.setProduct(cartItem.getProduct());
+				orderItem.setQuantity(cartItem.getQuantity());
+				orderItem.setDiscount(cartItem.getDiscount());
+				orderItem.setOrderedProductPrice(cartItem.getProductPrice());
+				orderItem.setOrder(savedOrder);
+
+				orderItems.add(orderItem);
+			}
+
+			orderItems = orderItemRepo.saveAll(orderItems);
+
+			cart.getCartItems().forEach(item -> {
+				int quantity = item.getQuantity();
+
+				Product product = item.getProduct();
+
+				cartService.deleteProductFromCart(cartId,
+						item.getProduct().getProductId());
+
+				product.setQuantity(product.getQuantity() - quantity);
+			});
+
+			OrderDTO orderDTO = modelMapper.map(savedOrder, OrderDTO.class);
+
+			orderItems.forEach(item -> orderDTO.getOrderItems().add(
+					modelMapper.map(item, OrderItemDTO.class)));
+
+			orderDTO.setAddress(modelMapper.map(address, AddressDTO.class));
+			return orderDTO;
 		}
-
-		Order order = new Order();
-		AddressDTO addressDTO = addressService.createAddress(createAddressDTO);
-		Address address = addressRepo
-				.findByCountryAndStateAndCityAndPincodeAndStreetAndBuildingName(
-						addressDTO.getCountry(), addressDTO.getState(),
-						addressDTO.getCity(), addressDTO.getPincode(),
-						addressDTO.getStreet(), addressDTO.getBuildingName());
-
-		order.setEmail(email);
-		order.setOrderDate(LocalDate.now());
-
-		order.setTotalAmount(cart.getTotalPrice());
-		order.setOrderStatus("Order Accepted !");
-
-		Payment payment = new Payment();
-		payment.setOrder(order);
-		payment.setPaymentMethod(paymentMethod.toUpperCase());
-		payment.setAddress(address);
-
-		payment = paymentRepo.save(payment);
-
-		order.setPayment(payment);
-
-		Order savedOrder = orderRepo.save(order);
-
-		List<CartItem> cartItems = cart.getCartItems();
-
-		if (cartItems.size() == 0) {
-			throw new APIException("Cart is empty");
-		}
-
-		List<OrderItem> orderItems = new ArrayList<>();
-
-		for (CartItem cartItem : cartItems) {
-			OrderItem orderItem = new OrderItem();
-
-			orderItem.setProduct(cartItem.getProduct());
-			orderItem.setQuantity(cartItem.getQuantity());
-			orderItem.setDiscount(cartItem.getDiscount());
-			orderItem.setOrderedProductPrice(cartItem.getProductPrice());
-			orderItem.setOrder(savedOrder);
-
-			orderItems.add(orderItem);
-		}
-
-		orderItems = orderItemRepo.saveAll(orderItems);
-
-		cart.getCartItems().forEach(item -> {
-			int quantity = item.getQuantity();
-
-			Product product = item.getProduct();
-
-			cartService.deleteProductFromCart(cartId,
-					item.getProduct().getProductId());
-
-			product.setQuantity(product.getQuantity() - quantity);
-		});
-
-		OrderDTO orderDTO = modelMapper.map(savedOrder, OrderDTO.class);
-
-		orderItems.forEach(item -> orderDTO.getOrderItems().add(
-				modelMapper.map(item, OrderItemDTO.class)));
-
-		orderDTO.setAddress(modelMapper.map(address, AddressDTO.class));
-		return orderDTO;
 	}
 
 	@Override
